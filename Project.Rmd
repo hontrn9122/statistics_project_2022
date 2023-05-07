@@ -1,0 +1,660 @@
+---
+title: "Statistics Project 2022 - TED Talks data analysis"
+output: html_notebook
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## 1. Introduction:
+
+In this project, we will explore a dataset of TED talks from Kaggle
+using R notebook. TED talks are influential talks given by experts from
+various fields that cover a wide range of topics such as science,
+technology, business, entertainment, and more. The dataset contains
+information about TED talks given from 1/1970 to 2/2022, including 6
+different features of each talk available on TED's website:
+
+-   title - Title of the Talk
+-   author - Author of Talk
+-   date - Date when the talk took place
+-   views - Number of views of the Talk
+-   likes - Number of likes of the Talk
+-   link - Link of the talk from ted.com
+
+Our goal is to analyze the data and gain insights into the trends and
+patterns of TED talks. We will use various statistical techniques and
+visualization tools to explore the data and answer questions such as:
+
+-   What is the relationship between 'views' and 'quarter'?
+-   What is the relationship between 'views' and 'like'?
+-   ...
+
+By the end of the project, we hope to have a better understanding of the
+TED talks data and how statistical analysis can provide valuable
+insights into real-world data.
+
+```{r include=FALSE}
+options(warning = FALSE)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(skimr)
+library(lubridate)
+library(carData)
+library("ggpubr")
+library(caret)
+library(car)
+```
+
+```{r include=FALSE}
+# load conflicted
+library(conflicted)
+
+# set conflict resolution to "error"
+conflict_prefer("filter", "dplyr")
+conflict_prefer("lag", "dplyr")
+
+# check for conflicts
+tidyverse_conflicts()
+```
+
+## 2. Pre-processing data:
+
+### 2.1 Import and overview data
+
+```{r}
+tedtalks<-read.csv("data.csv")
+#Print 6 first line of dataset
+head(tedtalks)
+```
+
+```{r}
+#Print columns name of dataset
+colnames(tedtalks)
+```
+
+### 2.2 Cleaning data
+
+```{r}
+#Getting info about the missing data
+colSums(is.na(tedtalks))
+```
+
+There is no NA values, no cleaning needed.
+
+### 2.3 Transform data
+
+To meet our intended plan for later data analysis, we need to do some
+transformation on the data
+
+```{r}
+#Changing "date" column to "year" column.
+tedtalks$month <- substr(tedtalks$date,0, nchar(tedtalks$date)-5)
+tedtalks$date = as.numeric(substr(tedtalks$date,nchar(tedtalks$date)-4, nchar(tedtalks$date)))
+names(tedtalks)[names(tedtalks) == "date"] <- "year"
+
+#Filtering the data frame to do statistic only in a twenty-year period from 2002 to 2021
+tedtalks = subset(tedtalks, year >= 2002 & year <= 2021) 
+
+#Add new column "quarter" to the data frame
+tedtalks = tedtalks %>%
+  mutate(quarter = case_when(
+    month == "January" | month == "February" | month == "March"  ~ "Q1",
+    month == "April" | month == "May" | month == "June"  ~ "Q2",
+    month == "July" | month == "August" | month == "September"  ~ "Q3",
+    month == "October" | month == "November" | month == "December"  ~ "Q4"
+  ))
+
+head(tedtalks,3)
+```
+
+## 3. Some basic statistic:
+
+```{r}
+#Basic statistical info of the dataset.
+summary(tedtalks)
+```
+
+```{r}
+#Count unique values in each column
+sapply(tedtalks, n_distinct)
+```
+
+## 4. Testing the relationship between 'views' and 'quarter':
+
+In this section, we will use some tests to verify the difference in
+Views between quarters
+
+First, we try to use ANOVA. The one-way analysis of variance (ANOVA),
+also known as one-factor ANOVA, is an extension of independent
+two-samples t-test for comparing means in a situation where there are
+more than two groups. In one-way ANOVA, the data is organized into
+several groups base on one single grouping variable (also called factor
+variable). In this part, we will use R to do ANOVA test.
+
+### 4.0 Transform data:
+
+To begin, we set the 'quarter' field to factor type
+
+```{r}
+#set quarter as factor
+tedtalks$quarter = as.factor(tedtalks$quarter)
+
+head(tedtalks,3)
+
+levels(tedtalks$quarter)
+```
+
+### 4.1 Descriptive statistics and graph
+
+```{r}
+# We will find out count, mean, standard deviation of each quarter.
+group_by(tedtalks, quarter) %>%
+  summarise(
+    count = n(),
+    mean = mean(views, na.rm = TRUE),
+    sd = sd(views, na.rm = TRUE)
+  )
+```
+
+```{r}
+# Plot box graph for quarter and views.
+ggboxplot(tedtalks, x = "quarter", y = "views", 
+          color = "quarter",
+          order = c("Q1", "Q2", "Q3", "Q4"),
+          ylab = "Views", xlab = "Quarter")
+```
+
+From the box plot, we can see that there are some outliers in the data
+frame. To do the ANOVA test, we need to check the homogeneity of
+variance with outliers. For this activity, we use Levene Test and start
+checking with the data frame that has outliers.
+
+```{r}
+# Check the homogeneity of variance with outliers
+leveneTest(views ~ quarter, data = tedtalks)
+```
+
+We can see that the p-value is less than the significance level of 0.05.
+This means we can not assume the homogeneity of variances in the
+different quarters. Since the variance across quarters are
+non-homogeneous with outliers in the data set, we will remove outliers
+and check again. We check number of rows in the data frame before
+removing outliers.
+
+```{r}
+dim(tedtalks) #Check data frame before removing outliers
+
+#Removing outlier using Interquartile range method:
+quartiles <- quantile(tedtalks$views, probs=c(.25, .75), na.rm = FALSE)
+IQR <- IQR(tedtalks$views)
+
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR 
+
+tedtalks_no_outlier <- subset(tedtalks, tedtalks$views > Lower & tedtalks$views < Upper)
+
+dim(tedtalks_no_outlier) #Check data frame after removing outliers
+```
+
+We can see that after remove outliers, there are only 4898 rows left.
+Now we use Levene Test to check the homogeneity of variance without
+outliers.
+
+```{r}
+leveneTest(views ~ quarter, data = tedtalks_no_outlier)
+```
+
+From the output above we can see that the p-value is not less than the
+significance level of 0.05. This means that there is no evidence to
+suggest that the variance across groups is statistically significantly
+different. Therefore, we can assume the homogeneity of variance in the
+different quarters.
+
+Let's draw a the box plot with the mean value for views in each quarter
+and a line plot with the mean standard error for views in each quarter
+after removing outliers.
+
+```{r}
+# Box plot for quarter and views after removing outlier 
+ggboxplot(tedtalks_no_outlier, x = "quarter", y = "views",
+          add = c("mean"),
+          color = "quarter",
+          order = c("Q1", "Q2", "Q3", "Q4"),
+          ylab = "Views", xlab = "Quarter")
+```
+
+```{r}
+# Line plot with the mean standard error for views in each quarter after removing outliers
+ggline(tedtalks_no_outlier, x = "quarter", y = "views", 
+       add = c("mean_se"), 
+       order = c("Q1", "Q2", "Q3", "Q4"),
+       ylab = "Views", xlab = "Quarter")
+```
+
+Pre-check normality or the data frame corresponding to each quarter.
+
+```{r}
+qplot(sample = views, data = tedtalks_no_outlier, facets = ~ quarter)
+```
+
+From the plots, the data seems to meet normality. Now we can start ANOVA
+test.
+
+### 4.2 ANOVA test
+
+```{r}
+# Compute the analysis of variance
+res.aov <- aov(views ~ quarter, data = tedtalks_no_outlier)
+# Summary of the analysis
+summary(res.aov)
+```
+
+The output includes the columns F value and Pr(\>F) corresponding to the
+p-value of the test. As the p-value is less than the significance level
+0.05, we can conclude that there are significant differences between the
+quarters.
+
+Now, we use Tukey multiple pairwise-comparisons to check whether the
+mean difference between specific pairs of quarter are statistically
+significant.
+
+```{r}
+# Compute Tukey HSD (Tukey Honest Significant Differences, R function: TukeyHSD())
+
+# For performing multiple pairwise-comparison between the means of groups
+TukeyHSD(res.aov)
+```
+
+From the output, we can see that only the difference between Q3 and Q1,
+Q4 and Q1, Q4 and Q2, Q4 and Q3 is significant with an adjusted p-value
+less than 0.05.
+
+Now we need to check the ANOVA assumption. The ANOVA test assumes that,
+the data are normally distributed and the variance across quarters are
+homogeneous. We can check that with some diagnostic plots. We have
+already checked the homogeneity of variance. Therefore, we only need to
+check the normality of the test.
+
+First, we use Q-Q plot.
+
+```{r}
+# Check the normality assumption
+plot(res.aov, 2)
+```
+
+All the points fall approximately along this reference line, we can
+assume normality. However, for better result, we use Shapiro-Wilk test
+on the ANOVA residuals to check our assumption.
+
+```{r}
+#Using Shapiro-Wilk test on the ANOVA residuals
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+```
+
+The p-value is less than 0.05, so we can not assume the normality of the
+test. Hence, we can not use ANOVA to test the relationship between views
+and quarters.
+
+Instead, we will use another test named Kruskal-Wallis rank sum test,
+which is a non-parametric alternative to one-way ANOVA.
+
+## 4.3 Kruskal-Wallis rank sum test
+
+```{r}
+#ANOVA assumptions are not met, alternatively using Kruskal-Wallis rank sum test
+kruskal.test(views ~ quarter, data = tedtalks_no_outlier)
+```
+
+The p-value is less than 0.05 so we can conclude that there are
+significant differences between the quarters.
+
+Now, we use Multiple pairwise-comparison to check whether the mean
+difference between specific pairs of quarter are statistically
+significant.
+
+```{r}
+#Calculate pairwise comparisons between group levels with corrections for multiple testing
+pairwise.wilcox.test(tedtalks_no_outlier$views, tedtalks_no_outlier$quarter,
+                     p.adjust.method = "BH")
+```
+
+From the output, the difference between Q3 and Q1, Q3 and Q2, Q4 and Q1,
+Q4 and Q2, Q4 and Q3 are significant with an adjusted p-value less than
+0.05.
+
+> Conclusion: There are significant differences in views between the
+> quarters
+
+## 5. Linear regression models to quantify the strength of the relationship between likes and views:
+
+Linear regression is basically the procedure to fit a straight line to
+the data. What this line does is either predicting the value of the
+response variable based on the value of explanatory or predictor
+variables or quantifying the strength of the relationship between the
+response and the explanatory variables. In this section, we use simple
+linear regression models to quantify the strength of the relationship
+between likes and views and try to predict views based on likes.
+
+First, we pre-check the linear relationship between views and likes.
+
+```{r}
+#Linear relationship between views and likes
+ggplot(tedtalks, aes(x = likes, y = views)) +
+  geom_point() +
+  stat_smooth()
+```
+
+From the plot, we can assume that likes and views have linear
+relationship. Hence, we can start to build the model now and check all
+assumptions later.
+
+### 5.1 Building the model
+
+To begin, we randomly split the data into training set (80% for training
+a predictive model) and testing set (20% for evaluating the model).
+
+```{r}
+#Split the data set into train set and test set
+set.seed(123)
+training.samples <- tedtalks$views %>%
+  createDataPartition(p = 0.8, list = FALSE)
+train.data  <- tedtalks[training.samples, ]
+test.data <- tedtalks[-training.samples, ]
+```
+
+Then, we start to compute our simple linear regression model by using
+lm() function on the train data set.
+
+```{r}
+#Build the model
+model <- lm(views ~ likes, data = train.data)
+summary(model)
+```
+
+The output above shows the estimate of the regression beta coefficients
+(column Estimate) and their significance levels (column Pr(\>\|t\|). The
+intercept (b0) is -11960 and the coefficient of likes variable is 33.11.
+
+The estimated regression equation can be written as follow: views =
+-11960 + 33.11\*likes. Using this formula, we believe that if we convey
+a survey to collect reaction about a topic, we could estimate the number
+of views in a set of people that know the existence of a ted talk show.
+
+### 5.2 Evaluate the model
+
+We check how well the model fits the data (goodness-of-fit) using the
+following three quantities, displayed in the model summary:
+
+-   Residual Standard Error (RSE),
+-   R-squared (R2) and adjusted R2,
+-   F-statistic, which has been already described in the previous
+    section.
+
+#### 5.2.1 Residual standard error (RSE)
+
+The RSE (or model sigma), corresponding to the prediction error,
+represents roughly the average difference between the observed outcome
+values and the predicted values by the model.The lower the RSE the best
+the model fits to our data.
+
+Dividing the RSE by the average value of the outcome variable will give
+you the prediction error rate, which should be as small as possible.
+
+```{r}
+#Calculate mean of views in train data set to calculate error rate
+mean(train.data$views)
+```
+
+In our example, using only likes predictor variables, the RSE = 90840,
+meaning that the observed views values deviate from the predicted values
+by approximately 90840 units in average.
+
+This corresponds to an error rate of 90840/mean(train.data\$views) =
+90840/2098262 = 4.33%, which is low.
+
+```{r}
+error_rate = 90840/2098262
+error_rate
+```
+
+#### 5.2.2 R-squared and Adjusted R-squared
+
+The R-squared (R2) ranges from 0 to 1 and represents the proportion of
+variation in the outcome variable that can be explained by the model
+predictor variables.
+
+For a simple linear regression, R2 is the square of the Pearson
+correlation coefficient between the outcome and the predictor variables.
+
+The R2 measures, how well the model fits the data. The higher the R2,
+the better the model. However, a problem with the R2, is that, it will
+always increase when more variables are added to the model, even if
+those variables are only weakly associated with the outcome (James et
+al. 2014). A solution is to adjust the R2 by taking into account the
+number of predictor variables.
+
+The adjustment in the "Adjusted R Square" value in the summary output is
+a correction for the number of x variables included in the predictive
+model.
+
+So, we mainly consider the adjusted R-squared, which is a penalized R2
+for a higher number of predictors.
+
+In our example, the adjusted R2 is 0.9994, which is good.
+
+#### 5.2.3 F-Statistic
+
+Recall that, the F-statistic gives the overall significance of the
+model. It assess whether at least one predictor variable has a non-zero
+coefficient.
+
+In a simple linear regression, this test is not really interesting since
+it just duplicates the information given by the t-test, available in the
+coefficient table.
+
+> From the result of goodness-of-fit, we can conclude that likes are
+> significantly associated to views.
+
+However, we still need to check model assumptions to make sure that our
+model can be used for prediction.
+
+#### 5.2.4 Check model assumptions
+
+We use plot(model) to draw 4 diagnostic plots of the model and display
+all of it as a matrix 2x2 on the screen.
+
+```{r}
+plot(model)
+```
+
+The diagnostic plots show residuals in four different ways:
+
+-   Residuals vs Fitted: Used to check the linear relationship
+    assumptions. A horizontal line, without distinct patterns is an
+    indication for a linear relationship, is good.
+
+-   Normal Q-Q: Used to examine whether the residuals are normally
+    distributed. It's good if residuals points follow the straight
+    dashed line.
+
+-   Scale-Location (or Spread-Location): Used to check the homogeneity
+    of variance of the residuals (homoscedasticity). Horizontal line
+    with equally spread points is a good indication of homoscedasticity.
+
+-   Residuals vs Leverage: Used to identify influential cases, that is
+    extreme values that might influence the regression results when
+    included or excluded from the analysis.
+
+##### Linearity of the data:
+
+The linearity assumption can be checked by inspecting the Residuals vs
+Fitted plot (1st plot).
+
+Ideally, the residual plot will show no fitted pattern. That is, the red
+line should be approximately horizontal at zero. The presence of a
+pattern may indicate a problem with some aspect of the linear model.
+
+In our model, at first, red line is approximately horizontal at zero,
+which is a very good sign. However, it is slightly far from zero at the
+end, which may be a sign for some problem with our linear model. To
+verify this, we need further analysis, but for now, we can temporarily
+assume linear relationship between the predictors and the outcome
+variables.
+
+##### Homogeneity of variance:
+
+This assumption can be checked by examining the scale-location plot,
+also known as the spread-location plot.
+
+This plot shows if residuals are spread equally along the ranges of
+predictors. It's good if you see a horizontal line with equally spread
+points. In our example, this is not the case.
+
+It can be seen that the variability (variances) of the residual points
+increases with the value of the fitted outcome variable, suggesting
+non-constant variances in the residuals errors (or heteroscedasticity).
+
+A possible solution to reduce the heteroscedasticity problem is to use a
+log transformation.
+
+```{r}
+trans_model <- lm(log(views) ~ log(likes), data = train.data)
+plot(trans_model)
+```
+
+This is not the best result. However, it is way better than the initial
+model as the redline is nearly horizontal line with equally spread
+points.
+
+If you look at the Residuals vs Fitted plot again, after apply log
+transforming, the result become worse and we can hardly say it is linear
+anymore.
+
+##### Normality of residuals
+
+The Q-Q plot of residuals can be used to visually check the normality
+assumption. The normal probability plot of residuals should
+approximately follow a straight line.
+
+For the model before and after log transforming, both have all the
+points fall approximately along this reference line, so we can assume
+normality.
+
+##### Outliers and high levarage points:
+
+-   Outliers:
+
+    -   An outlier is a point that has an extreme outcome variable
+        value. The presence of outliers may affect the interpretation of
+        the model, because it increases the RSE.
+
+    -   Outliers can be identified by examining the standardized
+        residual (or studentized residual), which is the residual
+        divided by its estimated standard error. Standardized residuals
+        can be interpreted as the number of standard errors away from
+        the regression line.
+
+    -   Observations whose standardized residuals are greater than 3 in
+        absolute value are possible outliers (James et al. 2014).
+
+-   High leverage points:
+
+    -   A data point has high leverage, if it has extreme predictor x
+        values. This can be detected by examining the leverage statistic
+        or the hat-value. A value of this statistic above 2(p + 1)/n
+        indicates an observation with high leverage (P. Bruce and Bruce
+        2017); where, p is the number of predictors and n is the number
+        of observations.
+
+Outliers and high leverage points can be identified by inspecting the
+Residuals vs Leverage plot.
+
+For the model before log transforming, the plot shows many extreme
+points with a standardized residuals is very high and exceed the Cook's
+distance, which is not a very good result.
+
+For the model after log transforming, the plot highlights the top 3 most
+extreme points with a standardized residuals below -2. However, there is
+no outliers that exceed Cook's distance, which is acceptable since there
+is no high leverage point in the data.
+
+> Overall, the model after do log transforming seems to have a better
+> result. Hence, we will continue using with this model.
+
+##### Model summary and prediction after log transforming:
+
+Since we have re-conduct the model using log transformation, we need to
+look at model summary again, do goodness-of-fit and measure the
+prediction performance with the test data set.
+
+```{r}
+summary(trans_model)
+```
+
+```{r}
+mean(log(train.data$views))
+```
+
+```{r}
+error_rate = 0.0256/13.75974
+error_rate
+```
+
+From the summary, we can see that RSE = 0.0256, corresponding to an
+error rate of 0.0256/13.75974 = 0.186%, the adjusted R2 is 0.9997. This
+is a very good result.
+
+Now, we do a log transformation with test data set, then make prediction
+with it and measure the model performance.
+
+```{r}
+# transform test data
+test.data$likes = log(test.data$likes)
+test.data$views = log(test.data$views)
+# make prediction
+predictions <- model %>% predict(test.data)
+# model performance
+# (a) Prediction error, RMSE
+RMSE(predictions, test.data$views)
+# (b) R-square
+R2(predictions, test.data$views)
+# calculate mean of views in test data set to calculate error rate
+mean(test.data$views)
+```
+
+From the output above, the R2 is 0.9776601, meaning that the observed
+and the predicted outcome values are highly correlated, which is very
+good.
+
+The prediction error RMSE is 8.023759, representing an error rate of
+8.023759/mean(test.data\$views) = 8.023759/13.73297 = 58.427%, which is
+very bad.
+
+Therefore, although the model looks good, it does not have a very good
+prediction performance in test data set.
+
+Hence, we may have failed to conduct an effective prediction model for
+views based on likes. However, through the model, we could see the
+relationship between likes and views in ted talks show.
+
+## 6. Conclusion:
+
+After finishing analyzing the data, we has concluded that statistics
+help in breaking out a problem to find a solution. In our activity, we
+have been able to import, clean, transform the data, plot the graph for
+prediction in R.
+
+More specific, we have used ANOVA and Kruskal-Wallis rank sum test to
+test the dependency of quarters and views, as well as we have conducted
+a simple linear regression to analyse the relationship between likes and
+views and tried to build a predictive model of views based on likes.
+
+Although, we have failed to make prediction, however, this is a great
+experience on building linear regression model and it help us to
+understand more clearly about how to conduct these tests and model in R
+language.
